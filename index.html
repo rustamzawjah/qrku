@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR-ku</title>
+<meta name="theme-color" content="#0d9488">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js" onerror="alert('Pustaka QR gagal dimuat - cek koneksi internet lalu muat ulang')"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" onerror="alert('Pustaka scanner gagal dimuat - cek koneksi internet lalu muat ulang')"></script>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:system-ui,sans-serif;margin:0;background:#f0fdfa;color:#134e4a}
+  header{background:#0d9488;color:#fff;padding:14px 16px;font-weight:700;font-size:20px}
+  nav{display:flex;background:#14b8a6}
+  nav button{flex:1;padding:12px;border:0;background:none;color:#ccfbf1;font-size:16px;cursor:pointer}
+  nav button.aktif{background:#f0fdfa;color:#0f766e;font-weight:700}
+  main{padding:16px;max-width:480px;margin:0 auto}
+  label{display:block;margin:10px 0 4px;font-size:14px;font-weight:600}
+  input{width:100%;padding:10px;border:1px solid #99f6e4;border-radius:8px;font-size:16px}
+  .tipe{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+  .tipe button{padding:8px 12px;border:1px solid #14b8a6;background:#fff;border-radius:20px;font-size:14px;cursor:pointer}
+  .tipe button.aktif{background:#0d9488;color:#fff}
+  #qrWrap{display:flex;justify-content:center;margin:16px 0}
+  canvas{background:#fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+  .btn{width:100%;padding:12px;border:0;border-radius:8px;background:#0d9488;color:#fff;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px}
+  .btn.kedua{background:#134e4a}
+  #hasil{margin-top:16px;padding:12px;background:#fff;border-radius:8px;word-break:break-all;display:none}
+  #reader{margin-top:16px}
+  #reader video{border-radius:8px}
+  p.petunjuk{font-size:14px;color:#0f766e}
+</style>
+</head>
+<body>
+<header>QR-ku</header>
+<nav>
+  <button id="tBuat" class="aktif" onclick="tab('buat')">📱 Buat QR</button>
+  <button id="tScan" onclick="tab('scan')">📷 Scan</button>
+</nav>
+<main>
+  <div id="buat">
+    <div class="tipe" id="tipeWrap"></div>
+    <div id="fields"></div>
+    <div id="qrWrap"><canvas id="qr"></canvas></div>
+    <button class="btn" onclick="unduh()">⬇️ Unduh QR (PNG)</button>
+    <button class="btn kedua" onclick="bagikan()">📤 Bagikan QR</button>
+    <p class="petunjuk">Tips: kalau unduh tidak jalan (misal di preview Acode), tekan lama gambar QR untuk menyimpan.</p>
+  </div>
+
+  <div id="scan" style="display:none">
+    <p class="petunjuk">Kamera hanya jalan lewat link Vercel (HTTPS) yang dibuka di aplikasi Chrome — bukan di preview Acode. Izinkan kamera saat diminta.</p>
+    <button class="btn" id="btnScan" onclick="scan()">📷 Mulai Scan</button>
+    <div id="reader"></div>
+    <div id="hasil"></div>
+  </div>
+</main>
+
+<script>
+const TIPE = {
+  kontak:{label:'Kartu Nama', fields:[['nama','Nama'],['tel','Nomor HP','+62812...','tel'],['email','Email (opsional)']]},
+  wa:{label:'WhatsApp', fields:[['wa','Nomor WhatsApp','0812... / 62812...','tel'],['pesanWa','Pesan otomatis (opsional)']]},
+  telp:{label:'Telepon', fields:[['telp','Nomor Telepon','','tel']]},
+  email:{label:'Email', fields:[['em','Email Tujuan'],['subj','Subjek (opsional)']]},
+  wifi:{label:'WiFi', fields:[['ssid','Nama WiFi (SSID)'],['pass','Password WiFi']]},
+  teks:{label:'Link / Teks', fields:[['teks','Link atau Teks','https://...']]}
+};
+let tipe = 'kontak';
+const v = {};
+let fileTerakhir = null;
+
+function waNum(s){let d=(s||'').replace(/[^0-9]/g,'');if(d.startsWith('0'))d='62'+d.slice(1);return d;}
+function esc(s){return (s||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/:/g,'\\:').replace(/"/g,'\\"');}
+function dataQr(){
+  switch(tipe){
+    case 'kontak': return 'BEGIN:VCARD\nVERSION:3.0\nFN:'+(v.nama||'')+'\nTEL;TYPE=CELL:'+(v.tel||'')+'\nEMAIL:'+(v.email||'')+'\nEND:VCARD';
+    case 'wa':{const p=encodeURIComponent(v.pesanWa||'');return 'https://wa.me/'+waNum(v.wa)+(p?'?text='+p:'');}
+    case 'telp': return 'tel:'+(v.telp||'');
+    case 'email':{const s=encodeURIComponent(v.subj||'');return 'mailto:'+(v.em||'')+(s?'?subject='+s:'');}
+    case 'wifi': return 'WIFI:T:WPA;S:'+esc(v.ssid)+';P:'+esc(v.pass)+';;';
+    case 'teks': return v.teks||'';
+  }
+}
+function kosong(){
+  const d=dataQr();
+  return !d.trim() || (tipe==='kontak' && !(v.nama||v.tel));
+}
+
+// Siapkan file PNG siap-bagikan (dibuat otomatis tiap QR berubah)
+async function siapkanFile(){
+  try{
+    const u = await QRCode.toDataURL(dataQr(), {width:1024, margin:2, errorCorrectionLevel:'M'});
+    const blob = await (await fetch(u)).blob();
+    fileTerakhir = new File([blob], 'qr-ku.png', {type:'image/png'});
+  }catch(e){ fileTerakhir = null; }
+}
+
+function renderTipe(){
+  const w=document.getElementById('tipeWrap'); w.innerHTML='';
+  for(const [k,t] of Object.entries(TIPE)){
+    const b=document.createElement('button');
+    b.textContent=t.label; if(k===tipe)b.className='aktif';
+    b.onclick=()=>{tipe=k;renderTipe();renderFields();gambar();};
+    w.appendChild(b);
+  }
+}
+function renderFields(){
+  const w=document.getElementById('fields'); w.innerHTML='';
+  for(const [id,label,hint,jenis] of TIPE[tipe].fields){
+    const l=document.createElement('label'); l.textContent=label; w.appendChild(l);
+    const i=document.createElement('input');
+    i.placeholder=hint||'';
+    if(jenis==='tel'){i.type='tel';i.inputMode='tel';}
+    i.value=v[id]||'';
+    i.oninput=()=>{v[id]=i.value;gambar();};
+    w.appendChild(i);
+  }
+}
+function gambar(){
+  const wrap=document.getElementById('qrWrap'), cv=document.getElementById('qr');
+  if(kosong()){wrap.style.display='none';fileTerakhir=null;return;}
+  wrap.style.display='flex';
+  QRCode.toCanvas(cv,dataQr(),{width:260,margin:2,errorCorrectionLevel:'M'})
+        .then(()=>siapkanFile())
+        .catch(()=>{wrap.style.display='none';alert('Data terlalu panjang untuk QR');});
+}
+
+async function unduh(){
+  if(kosong())return alert('Isi data dulu');
+  try{
+    if(!fileTerakhir) await siapkanFile();
+    if(!fileTerakhir) throw new Error('file gagal dibuat');
+    const url = URL.createObjectURL(fileTerakhir);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'qr-ku.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  }catch(e){
+    alert('Unduh gagal di browser ini. Tekan lama gambar QR untuk menyimpan, atau buka lewat link Vercel di Chrome.');
+  }
+}
+
+async function bagikan(){
+  if(kosong())return alert('Isi data dulu');
+  let bisa = false;
+  try{ bisa = !!(navigator.canShare && fileTerakhir && navigator.canShare({files:[fileTerakhir]})); }catch(e){ bisa = false; }
+  if(!bisa){
+    alert('Perangkat ini tidak mendukung berbagi file. QR akan diunduh saja — lalu kirim manual lewat WhatsApp/Galeri.');
+    return unduh();
+  }
+  try{
+    await navigator.share({files:[fileTerakhir], title:'QR-ku'});
+  }catch(e){
+    if(e && e.name==='AbortError') return; // pengguna membatalkan — bukan error
+    alert('Berbagi gagal, QR akan diunduh saja.');
+    unduh();
+  }
+}
+
+// ---------- SCAN ----------
+let scanner=null, jalan=false, terakhir='';
+async function scan(){
+  if(!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    alert('Kamera hanya jalan lewat HTTPS.\n\nBuka aplikasi ini lewat link Vercel (https://...) memakai aplikasi Chrome di HP, lalu izinkan kamera. Preview Acode / localhost tidak mendukung kamera.');
+    return;
+  }
+  const btn=document.getElementById('btnScan');
+  if(jalan){await hentikan();return;}
+  scanner=new Html5Qrcode('reader');
+  jalan=true; btn.textContent='⏹️ Berhenti';
+  try{
+    await scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:250,height:250}},async teks=>{
+      if(navigator.vibrate)navigator.vibrate(120);
+      await hentikan();
+      tampil(teks);
+    },()=>{});
+  }catch(e){
+    jalan=false;btn.textContent='📷 Mulai Scan';
+    alert('Kamera tidak bisa dibuka ('+e+').\nPastikan izin kamera diizinkan untuk situs ini (Chrome → ⋮ → Setelan situs → Kamera).');
+  }
+}
+async function hentikan(){
+  if(!jalan)return;
+  try{await scanner.stop();scanner.clear();}catch(e){}
+  jalan=false;
+  document.getElementById('btnScan').textContent='📷 Mulai Scan';
+}
+function tampil(teks){
+  terakhir=teks;
+  const h=document.getElementById('hasil'); h.style.display='block'; h.innerHTML='';
+  let judul='Hasil scan';
+  if(teks.startsWith('BEGIN:VCARD'))judul='Kartu Kontak (vCard)';
+  else if(teks.startsWith('https://wa.me/'))judul='WhatsApp';
+  else if(/^https?:\/\//i.test(teks))judul='Link';
+  const b=document.createElement('b'); b.textContent=judul; h.appendChild(b);
+  h.appendChild(document.createElement('br'));
+  if(/^https?:\/\//i.test(teks)){
+    const a=document.createElement('a'); a.href=teks; a.target='_blank'; a.rel='noopener';
+    a.textContent=teks; h.appendChild(a);
+  }else{
+    h.appendChild(document.createTextNode(teks));
+  }
+  h.appendChild(document.createElement('br'));
+  h.appendChild(document.createElement('br'));
+  const btn=document.createElement('button'); btn.className='btn kedua';
+  btn.textContent='📋 Salin'; btn.onclick=salin; h.appendChild(btn);
+}
+function salin(){navigator.clipboard.writeText(terakhir);alert('Tersalin!');}
+
+function tab(x){
+  document.getElementById('buat').style.display = x==='buat'?'block':'none';
+  document.getElementById('scan').style.display = x==='scan'?'block':'none';
+  document.getElementById('tBuat').classList.toggle('aktif',x==='buat');
+  document.getElementById('tScan').classList.toggle('aktif',x==='scan');
+  if(x!=='scan')hentikan();
+}
+
+// ---------- PWA ----------
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js');
+}
+
+renderTipe(); renderFields(); gambar();
+</script>
+</body>
+</html>
