@@ -1,0 +1,14 @@
+{
+  "name": "QR-ku",
+  "short_name": "QR-ku",
+  "description": "Buat & scan QR: kontak, WhatsApp, WiFi, link, email.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f0fdfa",
+  "theme_color": "#0d9488",
+  "icons": [
+    { "src": "file_00000000300081f5bed253d44cdf7ab3.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "file_00000000300081f5bed253d44cdf7ab3.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
