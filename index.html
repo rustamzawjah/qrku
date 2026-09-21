@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR-ku</title>
+<meta name="theme-color" content="#0d9488">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js" onerror="alert('Pustaka QR gagal dimuat - cek internet lalu muat ulang')"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" onerror="alert('Pustaka scanner gagal dimuat - cek internet lalu muat ulang')"></script>
+<style>
+*{box-sizing:border-box}
+body{font-family:system-ui,sans-serif;margin:0;background:#f0fdfa;color:#134e4a}
+header{background:#0d9488;color:#fff;padding:14px 16px;font-weight:700;font-size:20px}
+nav{display:flex;background:#14b8a6}
+nav button{flex:1;padding:12px;border:0;background:none;color:#ccfbf1;font-size:14px;cursor:pointer}
+nav button.aktif{background:#f0fdfa;color:#0f766e;font-weight:700}
+main{padding:16px;max-width:480px;margin:0 auto}
+label{display:block;margin:10px 0 4px;font-size:14px;font-weight:600}
+input{width:100%;padding:10px;border:1px solid #99f6e4;border-radius:8px;font-size:16px}
+.tipe{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.tipe button{padding:8px 12px;border:1px solid #14b8a6;background:#fff;border-radius:20px;font-size:14px;cursor:pointer}
+.tipe button.aktif{background:#0d9488;color:#fff}
+.kanvas{display:flex;justify-content:center;margin:16px 0}
+canvas{background:#fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.btn{width:100%;padding:12px;border:0;border-radius:8px;background:#0d9488;color:#fff;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px}
+.btn.kedua{background:#134e4a}
+.status{margin-top:12px;padding:12px;background:#fff;border-radius:8px;font-size:15px}
+#hasil{margin-top:16px;padding:12px;background:#fff;border-radius:8px;word-break:break-all;display:none}
+#reader{margin-top:16px}
+#reader video{border-radius:8px}
+p.petunjuk{font-size:14px;color:#0f766e}
+</style>
+</head>
+<body>
+<header>QR-ku</header>
+<nav>
+<button id="tBuat" class="aktif" onclick="tab('buat')">📱 Buat QR</button>
+<button id="tBerkas" onclick="tab('berkas')">📎 Berkas</button>
+<button id="tScan" onclick="tab('scan')">📷 Scan</button>
+</nav>
+<main>
+
+<div id="buat">
+<div class="tipe" id="tipeWrap"></div>
+<div id="fields"></div>
+<div class="kanvas"><canvas id="qr" width="300" height="300"></canvas></div>
+<button class="btn" onclick="unduh('qr')">⬇️ Unduh QR (PNG)</button>
+<button class="btn kedua" onclick="bagikan('qr')">📤 Bagikan QR</button>
+<p class="petunjuk">Tips: kalau unduh tidak jalan, tekan lama gambar QR untuk menyimpan.</p>
+</div>
+
+<div id="berkas" style="display:none">
+<p class="petunjuk">Pilih foto atau PDF dari galeri → otomatis diunggah → QR berisi linknya dibuat. Saat discan (dengan internet), berkas terbuka di HP yang scan. Link permanen. Ukuran maks ±10 MB.</p>
+<button class="btn" onclick="document.getElementById('fileIn').click()">🖼️ Pilih Foto / PDF</button>
+<button class="btn kedua" onclick="document.getElementById('fileCam').click()">📷 Jepret Foto</button>
+<input type="file" id="fileIn" accept="image/*,application/pdf" style="display:none" onchange="unggah(this.files[0])">
+<input type="file" id="fileCam" accept="image/*" capture="environment" style="display:none" onchange="unggah(this.files[0])">
+<div id="berkasStatus" class="status" style="display:none"></div>
+<div id="berkasHasil" style="display:none">
+<div class="kanvas"><canvas id="qrBerkas" width="300" height="300"></canvas></div>
+<div id="berkasLink" class="status" style="word-break:break-all"></div>
+<button class="btn" onclick="unduh('qrBerkas')">⬇️ Unduh QR (PNG)</button>
+<button class="btn kedua" onclick="bagikan('qrBerkas')">📤 Bagikan QR</button>
+</div>
+</div>
+
+<div id="scan" style="display:none">
+<p class="petunjuk">Arahkan kamera ke QR → hasil muncul di bawah.</p>
+<div id="reader"></div>
+<div id="hasil"></div>
+</div>
+
+</main>
+
+<script>
+const CLOUD='fwfslap8', PRESET='qrkuupload';
+
+function tab(n){
+['buat','berkas','scan'].forEach(id=>document.getElementById(id).style.display=(id===n?'block':'none'));
+['tBuat','tBerkas','tScan'].forEach((id,i)=>document.getElementById(id).classList.toggle('aktif',['buat','berkas','scan'][i]===n));
+if(n==='scan'){initScan()}else{stopScan()}
+}
+
+const tipe=[
+{id:'teks',label:'Teks',f:d=>d.teks,html:'<label>Teks</label><input oninput="isi(\'teks\',this.value)">'},
+{id:'wa',label:'WhatsApp',f:d=>'https://wa.me/'+(d.no||'').replace(/[^0-9]/g,'').replace(/^0/,'62'),html:'<label>Nomor WhatsApp</label><input inputmode="tel" placeholder="08..." oninput="isi(\'no\',this.value)">'},
+{id:'tel',label:'Telepon',f:d=>'tel:'+(d.no||'').replace(/[^0-9]/g,'').replace(/^0/,'62'),html:'<label>Nomor Telepon</label><input inputmode="tel" placeholder="08..." oninput="isi(\'no\',this.value)">'},
+{id:'email',label:'Email',f:d=>'mailto:'+(d.email||''),html:'<label>Email</label><input type="email" placeholder="alamat@email.com" oninput="isi(\'email\',this.value)">'},
+{id:'link',label:'Link',f:d=>d.link,html:'<label>Link</label><input type="url" placeholder="https://..." oninput="isi(\'link\',this.value)">'},
+{id:'wifi',label:'WiFi',f:d=>'WIFI:T:WPA;S:'+(d.ssid||'')+';P:'+(d.pass||'')+';;',html:'<label>Nama WiFi</label><input oninput="isi(\'ssid\',this.value)"><label>Password WiFi</label><input type="password" oninput="isi(\'pass\',this.value)">'}
+];
+let aktif=0, current={};
+
+function renderTipe(){
+const w=document.getElementById('tipeWrap'); w.innerHTML='';
+tipe.forEach((t,i)=>{
+const b=document.createElement('button');
+b.textContent=t.label;
+if(i===aktif)b.classList.add('aktif');
+b.onclick=()=>{aktif=i;current={};renderTipe();renderFields()};
+w.appendChild(b);
+});
+}
+function renderFields(){document.getElementById('fields').innerHTML=tipe[aktif].html;gambar()}
+function isi(k,v){current[k]=v;gambar()}
+
+function gambar(){
+const teks=(tipe[aktif].f(current)||'').trim();
+const cv=document.getElementById('qr');
+if(!teks){const c=cv.getContext('2d');c.clearRect(0,0,cv.width,cv.height);return}
+QRCode.toCanvas(cv,teks,{width:300}).catch(()=>{});
+}
+
+function unduh(id){
+const cv=document.getElementById(id);
+const a=document.createElement('a');
+a.download='qr.png'; a.href=cv.toDataURL('image/png'); a.click();
+}
+function bagikan(id){
+const cv=document.getElementById(id);
+cv.toBlob(async b=>{
+try{
+const f=new File([b],'qr.png',{type:'image/png'});
+if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:'QR-ku'});return}
+}catch(e){}
+unduh(id);
+});
+}
+
+async function unggah(f){
+if(!f)return;
+const st=document.getElementById('berkasStatus');
+document.getElementById('berkasHasil').style.display='none';
+st.style.display='block';
+st.textContent='⏳ Mengunggah '+f.name+' ...';
+try{
+const fd=new FormData();
+fd.append('file',f);
+fd.append('upload_preset',PRESET);
+const r=await fetch('https://api.cloudinary.com/v1_1/'+CLOUD+'/auto/upload',{method:'POST',body:fd});
+const j=await r.json();
+if(j.secure_url){tampil(j.secure_url)}
+else{st.textContent='❌ Gagal: '+((j.error&&j.error.message)||'coba lagi')}
+}catch(e){st.textContent='❌ Gagal terhubung — cek internet lalu coba lagi.'}
+}
+function tampil(url){
+document.getElementById('berkasStatus').style.display='none';
+document.getElementById('berkasLink').textContent=url;
+document.getElementById('berkasHasil').style.display='block';
+QRCode.toCanvas(document.getElementById('qrBerkas'),url,{width:300}).catch(()=>{});
+}
+
+let scanner=null, sedangScan=false;
+function initScan(){
+if(typeof Html5Qrcode==='undefined'){setTimeout(initScan,200);return}
+if(sedangScan)return;
+scanner=new Html5Qrcode('reader');
+scanner.start({facingMode:'environment'},{fps:10,qrbox:250},
+teks=>{const h=document.getElementById('hasil');h.style.display='block';h.textContent=teks},
+()=>{}
+).then(()=>{sedangScan=true}).catch(()=>{
+document.getElementById('reader').innerHTML='<p class="petunjuk">Kamera tidak bisa dibuka. Izinkan kamera di Chrome (ikon 🔒 di address bar) lalu coba lagi.</p>';
+});
+}
+function stopScan(){
+if(scanner&&sedangScan){scanner.stop().then(()=>scanner.clear()).catch(()=>{});sedangScan=false}
+}
+
+renderTipe(); renderFields();
+</script>
+</body>
+</html>
