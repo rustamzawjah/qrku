@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR-ku</title>
+<meta name="theme-color" content="#0d9488">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
+<style>
+*{box-sizing:border-box}
+body{font-family:system-ui,sans-serif;margin:0;background:#f0fdfa;color:#134e4a}
+header{background:#0d9488;color:#fff;padding:14px 16px;font-weight:700;font-size:20px}
+nav{display:flex;background:#14b8a6}
+nav button{flex:1;padding:12px;border:0;background:none;color:#ccfbf1;font-size:14px;cursor:pointer}
+nav button.aktif{background:#f0fdfa;color:#0f766e;font-weight:700}
+main{padding:16px;max-width:480px;margin:0 auto}
+input{width:100%;padding:10px;border:1px solid #99f6e4;border-radius:8px;font-size:16px;margin-bottom:8px}
+.tipe{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.tipe button{padding:8px 12px;border:1px solid #14b8a6;background:#fff;border-radius:20px;font-size:14px;cursor:pointer}
+.tipe button.aktif{background:#0d9488;color:#fff}
+.kanvas{display:flex;justify-content:center;margin:16px 0}
+canvas{background:#fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.btn{width:100%;padding:12px;border:0;border-radius:8px;background:#0d9488;color:#fff;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px}
+.btn.kedua{background:#134e4a}
+.btn.cetak{background:#fff;border:1px solid #0d9488;color:#0d9488}
+.row{display:flex;gap:8px}
+.row .btn{flex:1;margin-top:8px}
+#hasil{margin-top:16px;padding:12px;background:#fff;border-radius:8px;word-break:break-all;display:none}
+#reader{margin-top:16px}
+#reader video{border-radius:8px;max-width:100%}
+.petunjuk{font-size:13px;color:#0f766e;margin-top:8px}
+#berkasStatus{font-size:14px;color:#0f766e}
+#berkasStatus a{color:#0f766e}
+</style>
+</head>
+<body>
+<header>QR-ku</header>
+<nav>
+<button id="tBuat" class="aktif" onclick="tab('buat')">📱 Buat QR</button>
+<button id="tBerkas" onclick="tab('berkas')">📎 Berkas</button>
+<button id="tScan" onclick="tab('scan')">📷 Scan</button>
+</nav>
+<main>
+<div id="buat">
+<div class="tipe" id="tipeWrap"></div>
+<div id="fields"></div>
+<div class="kanvas"><canvas id="qr" width="300" height="300"></canvas></div>
+<button class="btn" onclick="unduh('qr')">⬇️ Unduh QR (PNG)</button>
+<button class="btn kedua" onclick="bagikan('qr')">📤 Bagikan QR</button>
+<p class="petunjuk">QR otomatis muncul saat kamu mengetik.</p>
+</div>
+<div id="berkas" style="display:none">
+<label>Pilih foto atau PDF dari galeri</label>
+<input type="file" id="fileInput" accept="image/*,.pdf">
+<p class="petunjuk" id="berkasStatus"></p>
+<div class="kanvas"><canvas id="qrBerkas" width="300" height="300"></canvas></div>
+<button class="btn" onclick="unduh('qrBerkas')">⬇️ Unduh QR (PNG)</button>
+<button class="btn kedua" onclick="bagikan('qrBerkas')">📤 Bagikan QR</button>
+<p class="petunjuk">Link permanen (Cloudinary). Ukuran maks ±10 MB.</p>
+</div>
+<div id="scan" style="display:none">
+<div class="row">
+<button class="btn" onclick="mulaiScan()">📷 Scan dari kamera</button>
+<button class="btn cetak" onclick="document.getElementById('fileScan').click()">📁 Pilih dari galeri</button>
+</div>
+<p class="petunjuk">Arahkan kamera ke QR, atau pilih foto QR dari galeri.</p>
+<input type="file" accept="image/*" style="display:none" id="fileScan">
+<div id="reader"></div>
+<div id="hasil"></div>
+<p class="petunjuk" id="scanPetunjuk"></p>
+</div>
+</main>
+<script>
+const CLOUD='fwfslap8';
+const PRESET='qrkuupload';
+let tipeAktif=0;
+let scanner=null;
+let sedangScan=false;
+let kameraVersi=0;
+function tab(n){
+hentikanKamera();
+document.getElementById('buat').style.display=n==='buat'?'block':'none';
+document.getElementById('berkas').style.display=n==='berkas'?'block':'none';
+document.getElementById('scan').style.display=n==='scan'?'block':'none';
+document.getElementById('tBuat').classList.toggle('aktif',n==='buat');
+document.getElementById('tBerkas').classList.toggle('aktif',n==='berkas');
+document.getElementById('tScan').classList.toggle('aktif',n==='scan');
+}
+const TIPE=[
+{nama:'📱 WhatsApp',fields:[{k:'v',ph:'Contoh: 6281234567890'}],buat:function(x){var n=(x.v||'').replace(/[^0-9]/g,'');if(n.charAt(0)==='0')n='62'+n.slice(1);return 'https://wa.me/'+n;}},
+{nama:'📞 Telepon',fields:[{k:'v',ph:'Contoh: 081234567890'}],buat:function(x){return 'tel:'+(x.v||'').replace(/[^0-9+]/g,'');}},
+{nama:'📧 Email',fields:[{k:'v',ph:'Contoh: nama@email.com'}],buat:function(x){return 'mailto:'+(x.v||'').trim();}},
+{nama:'🔗 Link',fields:[{k:'v',ph:'Contoh: google.com'}],buat:function(x){var v=(x.v||'').trim();return /^https?:\/\//i.test(v)?v:'https://'+v;}},
+{nama:'📶 WiFi',fields:[{k:'ssid',ph:'Nama WiFi (SSID)'},{k:'pass',ph:'Password WiFi (kosongkan jika tanpa password)'}],buat:function(x){var e=function(s){return (s||'').replace(/([\\;,:"'])/g,'\\$1');};var p=x.pass||'';return 'WIFI:T:'+(p?'WPA':'nopass')+';S:'+e(x.ssid)+(p?';P:'+e(p):'')+';;';}},
+{nama:'📝 Teks',fields:[{k:'v',ph:'Ketik teks apa saja'}],buat:function(x){return x.v||'';}}
+];
+function renderTipe(){
+var wrap=document.getElementById('tipeWrap');
+wrap.innerHTML='';
+TIPE.forEach(function(t,i){
+var b=document.createElement('button');
+b.textContent=t.nama;
+b.onclick=function(){pilihTipe(i);};
+wrap.appendChild(b);
+});
+}
+function pilihTipe(i){
+tipeAktif=i;
+var bs=document.querySelectorAll('#tipeWrap button');
+bs.forEach(function(b,j){b.classList.toggle('aktif',j===i);});
+var wrap=document.getElementById('fields');
+wrap.innerHTML='';
+TIPE[i].fields.forEach(function(f){
+var inp=document.createElement('input');
+inp.type='text';
+inp.dataset.k=f.k;
+inp.placeholder=f.ph;
+inp.oninput=updateQR;
+wrap.appendChild(inp);
+});
+updateQR();
+}
+function updateQR(){
+var wrap=document.getElementById('fields');
+var x={};
+wrap.querySelectorAll('input').forEach(function(inp){x[inp.dataset.k]=inp.value;});
+var teks=TIPE[tipeAktif].buat(x);
+var cv=document.getElementById('qr');
+if(!teks){cv.getContext('2d').clearRect(0,0,cv.width,cv.height);return;}
+if(typeof QRCode==='undefined'||!QRCode.toCanvas)return;
+QRCode.toCanvas(cv,teks,{width:300,margin:2},function(err){});
+}
+function unduh(id){
+var cv=document.getElementById(id);
+var l=document.createElement('a');
+l.download='qrku.png';
+l.href=cv.toDataURL('image/png');
+l.click();
+}
+function bagikan(id){
+var cv=document.getElementById(id);
+cv.toBlob(function(b){
+if(!b){alert('Gagal membuat gambar.');return;}
+var f=new File([b],'qrku.png',{type:'image/png'});
+if(navigator.share&&navigator.canShare&&navigator.canShare({files:[f]})){
+navigator.share({files:[f],title:'QR-ku'}).catch(function(){});
+}else{
+alert('Bagikan tidak didukung di browser ini. Gunakan Unduh, lalu kirim filenya.');
+}
+},'image/png');
+}
+function uploadBerkas(e){
+var f=e.target.files[0];
+e.target.value='';
+if(!f)return;
+var st=document.getElementById('berkasStatus');
+var cv=document.getElementById('qrBerkas');
+cv.getContext('2d').clearRect(0,0,cv.width,cv.height);
+st.textContent='⏳ Mengunggah '+f.name+' ...';
+var fd=new FormData();
+fd.append('file',f);
+fd.append('upload_preset',PRESET);
+fetch('https://api.cloudinary.com/v1_1/'+CLOUD+'/auto/upload',{method:'POST',body:fd})
+.then(function(r){return r.json();})
+.then(function(j){
+if(!j.secure_url){
+st.textContent='❌ Gagal: '+((j.error&&j.error.message)||'coba lagi');
+return;
+}
+st.innerHTML='✅ Berhasil! Link permanen:<br>';
+var a=document.createElement('a');
+a.href=j.secure_url;
+a.target='_blank';
+a.rel='noopener';
+a.textContent=j.secure_url;
+st.appendChild(a);
+if(typeof QRCode==='undefined'||!QRCode.toCanvas){
+st.textContent='❌ Pustaka QR belum dimuat. Muat ulang halaman.';
+return;
+}
+QRCode.toCanvas(cv,j.secure_url,{width:300,margin:2},function(err){
+if(err)st.textContent='❌ QR gagal dibuat.';
+});
+})
+.catch(function(){st.textContent='❌ Gagal koneksi. Cek internet lalu coba lagi.';});
+}
+function tampilkanHasil(teks){
+var h=document.getElementById('hasil');
+h.style.display='block';
+h.innerHTML='';
+var b=document.createElement('b');
+b.textContent='Hasil scan:';
+h.appendChild(b);
+h.appendChild(document.createElement('br'));
+if(/^https?:\/\//i.test(teks)){
+var a=document.createElement('a');
+a.href=teks;
+a.target='_blank';
+a.rel='noopener';
+a.textContent=teks;
+a.style.color='#0f766e';
+h.appendChild(a);
+}else{
+h.appendChild(document.createTextNode(teks));
+}
+}
+function mulaiScan(){
+kameraVersi++;
+var versi=kameraVersi;
+var c=document.getElementById('reader');
+document.getElementById('hasil').style.display='none';
+if(typeof Html5Qrcode==='undefined'){
+c.innerHTML='<p class="petunjuk">Pustaka scanner gagal dimuat. Cek internet lalu muat ulang halaman.</p>';
+return;
+}
+if(sedangScan)return;
+c.innerHTML='';
+var s=new Html5Qrcode('reader');
+scanner=s;
+sedangScan=true;
+s.start({facingMode:'environment'},{fps:10,qrbox:250},function(teks){
+tampilkanHasil(teks);
+hentikanKamera();
+},function(){}).catch(function(){
+if(versi===kameraVersi){
+sedangScan=false;
+if(scanner===s)scanner=null;
+c.innerHTML='<p class="petunjuk">Kamera tidak bisa dibuka. Ketuk ikon 🔒 di address bar → izinkan Kamera → muat ulang halaman, lalu coba lagi.</p>';
+}
+});
+}
+function hentikanKamera(){
+kameraVersi++;
+var s=scanner;
+scanner=null;
+sedangScan=false;
+if(!s)return;
+try{
+s.stop().then(function(){try{s.clear();}catch(e){}}).catch(function(){});
+}catch(e){}
+}
+function scanGambar(e){
+var f=e.target.files[0];
+e.target.value='';
+if(!f)return;
+hentikanKamera();
+document.getElementById('scanPetunjuk').textContent='⏳ Membaca gambar...';
+var r=new FileReader();
+r.onload=function(){
+var img=new Image();
+img.onload=function(){
+try{
+var mw=img.naturalWidth||300, mh=img.naturalHeight||300;
+var sk=Math.min(1,1500/Math.max(mw,mh));
+var w=Math.max(1,Math.round(mw*sk)), h=Math.max(1,Math.round(mh*sk));
+var cv=document.createElement('canvas');
+cv.width=w;
+cv.height=h;
+var ctx=cv.getContext('2d');
+ctx.drawImage(img,0,0,w,h);
+var d=ctx.getImageData(0,0,w,h);
+var res=null;
+if(typeof jsQR==='function'){res=jsQR(d.data,w,h);}
+if(res&&res.data){
+document.getElementById('scanPetunjuk').textContent='';
+tampilkanHasil(res.data);
+}else{
+document.getElementById('hasil').style.display='none';
+document.getElementById('scanPetunjuk').textContent='❌ QR tidak terbaca. Pastikan foto QR jelas, terang, dan tidak terpotong.';
+}
+}catch(err){
+document.getElementById('scanPetunjuk').textContent='❌ Gagal membaca gambar.';
+}
+};
+img.onerror=function(){document.getElementById('scanPetunjuk').textContent='❌ Gagal memuat gambar.';};
+img.src=r.result;
+};
+r.readAsDataURL(f);
+}
+renderTipe();
+pilihTipe(0);
+document.getElementById('fileInput').addEventListener('change',uploadBerkas);
+document.getElementById('fileScan').addEventListener('change',scanGambar);
+window.addEventListener('beforeunload',hentikanKamera);
+</script>
+</body>
+</html>
